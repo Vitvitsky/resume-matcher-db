@@ -2,7 +2,8 @@
 Alembic environment configuration для resume-matcher-db.
 
 DATABASE_URL читается из переменной окружения.
-Модели импортируются из resume-matcher-engine для поддержки autogenerate.
+Модели импортируются из локального models.py (зеркало engine + home-only
+таблицы для BFF: llm_debug_artifacts, upload_files, batches).
 """
 
 import os
@@ -17,18 +18,12 @@ from alembic import context
 # Загружаем .env из директории resume-matcher-db/
 load_dotenv(Path(__file__).parents[1] / ".env")
 
-# Добавляем путь к resume-matcher-engine для импорта моделей (autogenerate)
-_repo_root = Path(__file__).parents[2]
-_engine_path = _repo_root / "resume-matcher-engine"
-if _engine_path.exists():
-    sys.path.insert(0, str(_engine_path))
+# target_metadata — источник схемы для autogenerate.
+# Модели живут в resume-matcher-db/models.py (источник истины для BFF-схемы).
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from models import Base  # noqa: E402
 
-try:
-    from src.database.models import Base
-    target_metadata = Base.metadata
-except ImportError:
-    # autogenerate не будет работать, но миграции из versions/ применятся
-    target_metadata = None
+target_metadata = Base.metadata
 
 config = context.config
 
