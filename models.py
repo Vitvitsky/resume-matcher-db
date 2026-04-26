@@ -25,7 +25,7 @@ SQLAlchemy ORM модели для home-стенда resume-matcher-bff.
 - batches: Батч-задачи скоринга (home-only)
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Column,
@@ -43,6 +43,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
+def _utcnow() -> datetime:
+    """Текущий UTC как tz-aware datetime для default/onupdate."""
+    return datetime.now(UTC)
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -58,8 +63,8 @@ class CandidateDB(Base):
     email = Column(String(255), nullable=True, index=True)
     phone = Column(String(50), nullable=True, index=True)
     alternate_names = Column(JSON, default=list)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     resume_links = relationship("CandidateResumeLink", back_populates="candidate")
     transcriptions = relationship("InterviewTranscriptionDB", back_populates="candidate")
@@ -77,7 +82,7 @@ class CandidateResumeLink(Base):
     resume_id = Column(String(64), nullable=False, index=True)
     vacancy_id = Column(String(64), nullable=True, index=True)
     source_filename = Column(String(512), nullable=True)
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime(timezone=True), default=_utcnow)
 
     candidate = relationship("CandidateDB", back_populates="resume_links")
 
@@ -99,7 +104,7 @@ class CandidateScoringLink(Base):
     match_id = Column(String(128), nullable=False, unique=True)
     overall_score = Column(Integer, nullable=False)
     job_family = Column(String(50), nullable=True)
-    scored_at = Column(DateTime, default=datetime.utcnow)
+    scored_at = Column(DateTime(timezone=True), default=_utcnow)
 
     __table_args__ = (
         Index("ix_csl_candidate_vacancy", "candidate_id", "vacancy_id"),
@@ -122,7 +127,7 @@ class InterviewTranscriptionDB(Base):
     full_text = Column(Text, nullable=False)
     segments_json = Column(JSON, default=list)
     summary_json = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     candidate = relationship("CandidateDB", back_populates="transcriptions")
 
@@ -140,7 +145,7 @@ class InterviewFeedbackDB(Base):
     candidate_id = Column(String(36), ForeignKey("candidates.id"), nullable=False, index=True)
     vacancy_id = Column(String(64), nullable=False, index=True)
     interviewer_name = Column(String(255), nullable=False)
-    interview_date = Column(DateTime, nullable=False)
+    interview_date = Column(DateTime(timezone=True), nullable=False)
     overall_score = Column(Integer, nullable=False)
     technical_score = Column(Integer, nullable=True)
     cultural_fit_score = Column(Integer, nullable=True)
@@ -148,7 +153,7 @@ class InterviewFeedbackDB(Base):
     weaknesses = Column(JSON, default=list)
     recommendation = Column(String(20), nullable=False)
     comments = Column(Text, default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     candidate = relationship("CandidateDB", back_populates="feedbacks")
 
@@ -170,7 +175,7 @@ class VacancyCacheDB(Base):
     job_family = Column(String(50), nullable=True, index=True)
     domain = Column(String(100), nullable=True)
     role_level = Column(String(50), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class UserPreferencesDB(Base):
@@ -180,7 +185,7 @@ class UserPreferencesDB(Base):
 
     ldap = Column(String(128), primary_key=True)
     display_name = Column(String(255), nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class ResumeCacheDB(Base):
@@ -193,7 +198,7 @@ class ResumeCacheDB(Base):
     artifact_json = Column(Text, nullable=False)
     candidate_name = Column(String(256), nullable=True)
     total_experience_years = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class MatchResultDB(Base):
@@ -211,7 +216,7 @@ class MatchResultDB(Base):
     job_family = Column(String(50), nullable=True, index=True)
     red_flags_count = Column(Integer, nullable=True)
     summary_short = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     __table_args__ = (Index("ix_match_vacancy_resume", "vacancy_id", "resume_id"),)
 
@@ -237,8 +242,8 @@ class TrainingDataDB(Base):
     quality_label = Column(String(20), nullable=True)
     dataset_version = Column(String(20), nullable=False)
     is_complete = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     candidate = relationship("CandidateDB", back_populates="training_records")
 
@@ -276,7 +281,7 @@ class LLMDebugArtifactDB(Base):
     pipeline_version = Column(String(32), nullable=False)
     llm_model = Column(String(128), nullable=False)
     latency_ms = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class UploadFileDB(Base):
@@ -298,7 +303,7 @@ class UploadFileDB(Base):
     resume_id = Column(
         String(128), ForeignKey("resume_cache.resume_id"), nullable=True
     )
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class BatchDB(Base):
@@ -316,5 +321,5 @@ class BatchDB(Base):
     failed = Column(Integer, nullable=False, default=0)
     cancelled = Column(Boolean, nullable=False, default=False)
     author_ldap = Column(String(128), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
