@@ -102,7 +102,7 @@ class CandidateScoringLink(Base):
     vacancy_id = Column(String(64), nullable=False, index=True)
     resume_id = Column(String(64), nullable=False)
     match_id = Column(String(128), nullable=False, unique=True)
-    overall_score = Column(Integer, nullable=False)
+    overall_score = Column(Float, nullable=False)
     job_family = Column(String(50), nullable=True)
     scored_at = Column(DateTime(timezone=True), default=_utcnow)
 
@@ -210,7 +210,7 @@ class MatchResultDB(Base):
     vacancy_id = Column(String(128), nullable=False, index=True)
     resume_id = Column(String(128), nullable=False, index=True)
     artifact_json = Column(Text, nullable=False)
-    overall_score = Column(Integer, nullable=True)
+    overall_score = Column(Float, nullable=True)
     candidate_name = Column(String(256), nullable=True)
     vacancy_name = Column(String(256), nullable=True)
     job_family = Column(String(50), nullable=True, index=True)
