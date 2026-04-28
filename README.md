@@ -1,14 +1,14 @@
 # resume-matcher-db
 
-**PostgreSQL сервис хранения для Resume Matcher.**
+**PostgreSQL сервис хранения для home-стенда resume-matcher.**
 
 Отдельный UV-проект, отвечающий за:
 - Запуск PostgreSQL 16 через Docker
 - Управление схемой базы данных (Alembic-миграции)
 - Версионирование и накатку изменений схемы
 
-Движок (`resume-matcher-engine`) подключается к этой БД через `DATABASE_URL` в своём `.env`.
-По умолчанию движок работает с SQLite — PostgreSQL активируется явно.
+К этой БД подключается **`resume-matcher-bff`** через `DATABASE_URL` (asyncpg).
+**`resume-matcher-engine` после эпика SQLite-removal — stateless** и в БД не пишет.
 
 ---
 
@@ -29,12 +29,14 @@ docker-compose up -d
 uv run alembic upgrade head
 ```
 
-После этого прописать `DATABASE_URL` в `.env` движка:
+После этого прописать `DATABASE_URL` в `.env` BFF:
 
 ```bash
-# resume-matcher-engine/.env
-DATABASE_URL=postgresql+psycopg2://resume_matcher:your_password@localhost:5432/resume_matcher
+# resume-matcher-bff/.env
+DATABASE_URL=postgresql+asyncpg://resume_matcher:your_password@localhost:5432/resume_matcher
 ```
+
+Alembic читает sync-URL (`postgresql+psycopg2://...`) из той же `.env` через `alembic/env.py`.
 
 ---
 
@@ -43,10 +45,15 @@ DATABASE_URL=postgresql+psycopg2://resume_matcher:your_password@localhost:5432/r
 ```
 resume-matcher-db/
 ├── alembic/
-│   ├── env.py                        ← Конфигурация Alembic (читает DATABASE_URL)
-│   ├── script.py.mako                ← Шаблон файлов миграций
+│   ├── env.py                              ← Конфигурация Alembic (читает DATABASE_URL)
+│   ├── script.py.mako                      ← Шаблон файлов миграций
+│   ├── models.py                           ← ORM Base (источник для autogenerate)
 │   └── versions/
-│       └── 001_initial_schema.py     ← Начальная схема (все 12 таблиц)
+│       ├── 001_initial_schema.py           ← Начальная схема (12 таблиц)
+│       ├── 002_add_denormalized_columns.py ← Денорм. поля в vacancy_cache (role_title/job_family/...)
+│       ├── 003_home_schema.py              ← Home-дельта: drop 2 РИТМ-mapping, add 3 home-таблицы
+│       ├── 004_tz_aware_datetimes.py       ← TIMESTAMP → TIMESTAMPTZ для всех 17 колонок
+│       └── 005_overall_score_float.py      ← overall_score Integer → Float (precision)
 ├── alembic.ini                       ← Настройки Alembic
 ├── docker-compose.yml                ← PostgreSQL 16 с volume и healthcheck
 ├── pyproject.toml                    ← UV-зависимости (alembic, psycopg2-binary)
@@ -103,46 +110,52 @@ uv run alembic downgrade -1
 
 ## Схема базы данных
 
-12 таблиц, соответствующих ORM-моделям в `resume-matcher-engine/src/database/models.py`:
+13 таблиц после revisions 001-005. Источник истины для ORM — **`resume-matcher-bff/src/db/models.py`** (engine после SQLite-removal не имеет `src/database/`). `alembic/models.py` содержит копию `Base` для `--autogenerate`.
 
-| Таблица | Назначение |
-|---------|-----------|
-| `vacancy_cache` | Кэш проанализированных вакансий (VacancyArtifact + JSON) |
-| `resume_cache` | Кэш проанализированных резюме (ResumeArtifact + JSON) |
-| `match_results` | Результаты скоринга резюме×вакансия (MatchArtifact) |
-| `resource_order_mapping` | Маппинг РИТМ resource_order_id → vacancy_id |
-| `candidate_id_mapping` | Маппинг candidate_id → resume_id |
-| `user_preferences` | Настройки пользователей (LDAP → display_name) |
-| `candidates` | Мастер-таблица кандидатов (дедупликация по ФИО) |
-| `candidate_resume_links` | Связь кандидат ↔ резюме |
-| `candidate_scoring_links` | Связь кандидат ↔ результат скоринга |
-| `interview_transcriptions` | Транскрипции интервью с кандидатами |
-| `interview_feedbacks` | Обратная связь рекрутеров после интервью |
-| `training_data` | Агрегированные данные для файн-тюнинга моделей |
+| Таблица | Назначение | Появилась в |
+|---------|-----------|-------------|
+| `vacancy_cache` | Артефакты проанализированных вакансий + денорм. поля (role_title, job_family, domain, role_level, author_ldap) | 001 + 002 |
+| `resume_cache` | Артефакты проанализированных резюме | 001 |
+| `match_results` | Результаты скоринга резюме×вакансия (`overall_score: Float`) | 001 |
+| `user_preferences` | Настройки пользователей (LDAP → display_name) | 001 |
+| `candidates` | Мастер-таблица кандидатов (дедупликация по нормализованному ФИО, NFKD+casefold) | 001 |
+| `candidate_resume_links` | Связь кандидат ↔ резюме | 001 |
+| `candidate_scoring_links` | Связь кандидат ↔ результат скоринга (`overall_score: Float`) | 001 |
+| `interview_transcriptions` | Транскрипции интервью с кандидатами | 001 |
+| `interview_feedbacks` | Обратная связь рекрутеров после интервью | 001 |
+| `training_data` | Агрегированные данные для файн-тюнинга моделей | 001 |
+| `batches` | Батч-задачи скоринга (для `POST /scoring/batch` в BFF) | 003 |
+| `llm_debug_artifacts` | Промпты + сырые ответы LLM (debug-режим) | 003 |
+| `upload_files` | Метаданные загруженных файлов (kind, sha256, stored_path, ...) | 003 |
 
-JSONB-колонки используются для хранения артефактов (`artifact_json`) и вложенных структур (`segments_json`, `feedbacks_json` и др.).
+В revision 003 удалены: `resource_order_mapping`, `candidate_id_mapping` (РИТМ-специфика, дома не нужны).
+
+JSONB-колонки хранят артефакты (`artifact_json`, `segments_json`, `feedbacks_json` и др.). Все timestamp-колонки — `TIMESTAMPTZ` (revision 004).
 
 ---
 
 ## Добавление новой миграции
 
-При изменении `resume-matcher-engine/src/database/models.py`:
+При изменении схемы (источник — `resume-matcher-bff/src/db/models.py`):
 
 ```bash
-# 1. Убедиться, что БД запущена и HEAD применён
-uv run alembic current   # должно быть: 001 (head)
+# 1. Синхронизировать локальный alembic/models.py с BFF — ручной copy/diff
+#    (общего пакета пока нет, контролируется ревью)
 
-# 2. Сгенерировать миграцию (autogenerate сравнит models.py с текущей схемой)
+# 2. Убедиться, что БД запущена и HEAD применён
+uv run alembic current   # должно быть: 005 (head)
+
+# 3. Сгенерировать миграцию (autogenerate сравнит models.py с текущей схемой)
 uv run alembic revision --autogenerate -m "добавить колонку X в таблицу Y"
 
-# 3. Проверить сгенерированный файл в alembic/versions/
-# (убедиться, что upgrade/downgrade корректны)
+# 4. Проверить сгенерированный файл в alembic/versions/
+# (upgrade/downgrade, корректность ON DELETE/UPDATE, индексы)
 
-# 4. Применить
+# 5. Применить
 uv run alembic upgrade head
 ```
 
-`alembic/env.py` автоматически импортирует `Base.metadata` из `../resume-matcher-engine/src/database/models.py` — оба проекта должны находиться в одном монорепозитории.
+`alembic/env.py` импортирует `Base.metadata` из локального `alembic/models.py`. Это **копия** ORM из BFF, синхронизируется руками — иначе autogenerate генерирует неправильный diff.
 
 ---
 
@@ -182,5 +195,6 @@ docker-compose up -d
 
 ## Связанные проекты
 
-- **[resume-matcher-engine](../resume-matcher-engine/)** — Backend, подключается к этой БД через `DATABASE_URL`
-- **[resume-matcher-ui](../resume-matcher-ui/)** — UI, работает через HTTP API движка
+- **[resume-matcher-bff](../resume-matcher-bff/)** — единственный owner persistance, подключается к этой БД через asyncpg
+- **[resume-matcher-engine](../resume-matcher-engine/)** — stateless compute, к БД не ходит
+- **[resume-matcher-ui](../resume-matcher-ui/)** — React SPA, ходит в BFF через REST
